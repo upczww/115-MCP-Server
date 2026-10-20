@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "115-netdisk": {
+      "transport": "stdio",
+      "command": "/absolute/path/to/115-MCP-Server/.venv/bin/python",
+      "args": ["-m", "mcp_115_server", "--transport", "stdio"],
+      "cwd": "/absolute/path/to/115-MCP-Server",
+      "description": "115 网盘 MCP（upczww fork）",
+      "auto_start": true,
+      "tools": {"include": [], "exclude": []}
+    }
+  }
+}

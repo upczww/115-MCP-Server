@@ -2,6 +2,92 @@
 
 基于 **FastMCP** 和 **p115client** 的 115 网盘 MCP 服务器。
 
+## upczww fork · 0.2.0
+
+本 fork 保留上游的 58 个 MCP 工具名称，适配 `p115client 0.0.9.7.2` 的 Cookie 云下载接口。
+依赖范围限定为 `>=0.0.9.7.2,<0.0.10`，后续破坏性升级需重新测试，不能假定未来版本自动兼容。
+
+- 标准 MCP：默认 **stdio / JSON-RPC 2.0**，支持 initialize、tools/list、tools/call、resources/read。
+- 传输：stdio、Streamable HTTP（`http` / `streamable-http` / `streamable_http`）及兼容 SSE。
+- 工具提供 `readOnlyHint`、`destructiveHint`、`idempotentHint`、`openWorldHint`；这些是提示，不代替客户端授权。
+- 默认关闭文件调试日志，不在工作目录创建 `logs`，不向 stdout 打印启动 banner。
+- 云下载保留 Cookie 登录；`offline_*` 是对外工具名，内部适配新版 `clouddownload_*`。
+- 不确定的写请求失败不会自动跨接口重复提交；先查询任务状态再决定是否重试。
+
+### macOS / Linux 安装与测试
+
+```bash
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -e .
+.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/python -m mcp_115_server --transport stdio
+```
+
+Windows 使用 `.venv/Scripts/python.exe` 替换上述 Python 路径。自动化测试使用模拟请求，不需要 Cookie，
+不会创建真实下载任务。协议测试验证 MCP `2025-11-25` 握手和工具发现；实际账号调用仍需单独验收。
+
+### 正式安装到 `~/.bolt/mcp`（macOS / Linux）
+
+建议将开发仓库与运行环境分开，用版本化目录安装 wheel，不要直接搬运虚拟环境：
+
+```bash
+# 在本仓库根目录执行；需要 Python 3.12。
+INSTALL_ROOT="$HOME/.bolt/mcp/115-netdisk/versions/0.2.0"
+WHEEL_DIR="$(mktemp -d)"
+python3.12 -m pip wheel --no-deps --wheel-dir "$WHEEL_DIR" .
+python3.12 -m venv "$INSTALL_ROOT/.venv"
+"$INSTALL_ROOT/.venv/bin/python" -m pip install "$WHEEL_DIR"/115_mcp_server-0.2.0-*.whl
+"$INSTALL_ROOT/.venv/bin/115-MCP-Server" --help
+```
+
+升级时新建对应版本目录，保留旧环境以便回退。Bolt 的命令和工作目录均使用展开后的**绝对路径**，
+不要在表单里直接填写未展开的 `~` 或 `$HOME`。同一版本目录已有安装时，不要反复重建或覆盖正在运行的环境。
+
+### 验证记录
+
+2026-10-20，在 macOS Apple Silicon、Python 3.12、`p115client 0.0.9.7.2` 环境中：
+
+- 源码及 wheel 安装后的完整自动化测试均为 **120 / 120 通过**。
+- stdio 握手、58 个工具发现、资源读取和工具调用通过；正式目录中的协议/启动测试 **4 / 4 通过**。
+- Bolt 中真实账号的登录校验、离线任务查询、配额查询和下载目录查询成功。
+- 在用户明确授权后，成功提交一条磁力任务到指定目录，并查询到 **100% / 下载成功**。
+
+真实账号验证不包含在自动化测试中，不能据此保证任意资源都有种、任意账号都有配额，或所有写操作均已联调。
+仓库已配置 Linux / macOS / Windows 的 GitHub Actions 测试矩阵；上述本地结果不等同于远程 CI 已通过。
+
+### 接入 Bolt
+
+在 **设置 → MCP 服务器 → 新服务器**（升级时编辑已有 `115-netdisk`）中填写：
+
+- 连接方式：本地命令（stdio）
+- 命令：安装环境中 Python 的**绝对路径**
+- 参数：每行一个参数，即 `-m`、`mcp_115_server`、`--transport`、`stdio`
+- 工作目录：项目或专用部署目录
+
+凭据只在同一表单的 **鉴权配置 → 环境变量 / 凭据文件** 中配置：变量名 `P115_COOKIES`，
+值为你的 Cookie，并保持“此值包含密钥”选中。不要将 Cookie 写入仓库、启动参数、导出的 JSON 或聊天。
+如果采用凭据文件模式，变量名应为 `P115_COOKIES_PATH`。
+更换命令或代码后，根据 Bolt 提示重新授权该目标，再保存并连接。
+
+#### 升级后报 `CREDENTIAL_PROGRAM_BINDING_CHANGED`
+
+这表示 Bolt 检测到已授权程序的启动路径或程序内容发生变化，在把凭据交给新目标之前阻止了连接；
+不能据此认定 Cookie 失效或 115 接口不可用。此校验属于 Bolt，而不是本 MCP 服务器的接口错误。
+
+先固定最终安装目录、命令、参数和工作目录，再到 **115-netdisk → 编辑服务器 → 鉴权配置** 中
+重新输入 `P115_COOKIES` 的值并保存/连接，以重新授权当前目标。值留空只会保留原凭据，
+不应当作已完成重新绑定。仍有效的原 Cookie 可以重新填写，不需要仅因这个错误更换账号或获取新 Cookie。
+不要读取凭据库、把 Cookie 写入普通环境配置来绕过保护，或关闭程序绑定校验。
+若重新填写后仍报错，保留配置并检查 Bolt 的鉴权保存/重新绑定流程，不要反复重装、删除凭据或重复提交下载。
+
+配置模板见 [`examples/bolt-mcp.json`](examples/bolt-mcp.json)，使用前替换绝对路径；
+模板不含凭据，也不要求新增主机信任权限。升级应保留原服务器的工具过滤、启用状态和权限选择。
+
+推荐验收顺序：`auth_status(validate_remote=true)` → `list_directory` → `offline_list_tasks` →
+`offline_get_quota_info` → `offline_get_download_paths`。添加、重启、删除任务会产生实际写操作，需另行明确执行。
+
+HTTP 默认只监听 `127.0.0.1`；不要在没有鉴权和访问控制的情况下将有账号权限的服务暴露到公网。
+
 ## 项目来源与致谢
 
 本项目是一个基于以下开源项目进行封装与扩展的 MCP 服务器：

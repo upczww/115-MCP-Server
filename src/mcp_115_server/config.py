@@ -31,7 +31,8 @@ class Settings(BaseSettings):
     fastmcp_port: int = Field(default=8000, alias="FASTMCP_PORT")
     fastmcp_path: str = Field(default="/mcp", alias="FASTMCP_PATH")
     fastmcp_log_level: str = Field(default="info", alias="FASTMCP_LOG_LEVEL")
-    p115_debug_logging: bool = Field(default=True, alias="P115_DEBUG_LOGGING")
+    # stdio MCP must start in read-only working directories without creating logs.
+    p115_debug_logging: bool = Field(default=False, alias="P115_DEBUG_LOGGING")
     p115_debug_log_file: str | None = Field(default="./logs/115-mcp-debug.log", alias="P115_DEBUG_LOG_FILE")
 
     @property

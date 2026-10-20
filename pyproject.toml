@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "115-MCP-Server"
-version = "0.1.0"
+version = "0.2.0"
 description = "FastMCP server for 115 cloud storage powered by p115client"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -14,10 +14,14 @@ authors = [
 ]
 dependencies = [
   "fastmcp>=3.1.1,<4",
-  "p115client>=0.0.8.4.6,<0.1",
+  "p115client>=0.0.9.7.2,<0.0.10",
   "pydantic-settings>=2.0,<3",
   "yarl>=1.23,<2",
 ]
+
+[project.urls]
+Repository = "https://github.com/upczww/115-MCP-Server"
+Issues = "https://github.com/upczww/115-MCP-Server/issues"
 
 [project.scripts]
 115-MCP-Server = "mcp_115_server.server:main"

@@ -8,6 +8,7 @@ from datetime import date, datetime
 from enum import StrEnum
 from os import PathLike
 from pathlib import Path
+from importlib.metadata import version as package_version
 from typing import Any
 from uuid import uuid4
 
@@ -17,6 +18,11 @@ from p115client.fs import P115FileSystem
 from yarl import URL
 
 from .config import Settings
+from .version import __version__
+from .compat import (
+    OFFLINE_METHODS, OFFLINE_MUTATIONS, client_kwargs,
+    has_modern_offline, offline_method, task_page,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -290,9 +296,14 @@ class P115Service:
     def auth_status(self, validate_remote: bool = False) -> dict[str, Any]:
         status: dict[str, Any] = {
             "configured": self.settings.has_auth_configuration,
+            "p115client_version": package_version("p115client"),
             "cookies_source": self.settings.cookies_source,
             "active_platform": self._active_platform,
             "check_for_relogin": self.settings.p115_check_for_relogin,
+            "check_for_relogin_supported": "check_for_relogin" in client_kwargs(
+                P115Client, app=None, console_qrcode=False,
+                check_for_relogin=self.settings.p115_check_for_relogin,
+            ),
             "allow_qrcode_login": self.settings.p115_allow_qrcode_login,
             "console_qrcode": self.settings.p115_console_qrcode,
             "client_initialized": self._client_instance is not None,
@@ -317,6 +328,8 @@ class P115Service:
                 "Enable P115_ALLOW_QRCODE_LOGIN only if your runtime can display the QR flow."
             )
 
+        status["active_platform"] = self._active_platform
+        status["client_initialized"] = self._client_instance is not None
         return status
 
     def start_qrcode_login(self, app: str = "alipaymini") -> dict[str, Any]:
@@ -807,7 +820,7 @@ class P115Service:
                 "offline_list_tasks",
                 lambda client, platform: self._offline_list_tasks_with_platform(client, platform, page, request_id=request_id),
             )
-        data = response.get("data", response)
+        data = task_page(response)
         self._debug_log(
             "offline_list_tasks.success",
             request_id=request_id,
@@ -849,10 +862,11 @@ class P115Service:
                 "offline_list_tasks_advanced",
                 lambda client, platform: self._call_backend(
                     check_response,
-                    self._call_backend(client.offline_list, payload, type="web" if self._is_web_like_platform(platform) else "ssp"),
+                    self._call_backend(offline_method(client, "offline_list"), dict(payload), type="web" if self._is_web_like_platform(platform, client) else "ssp"),
                 ),
                 request_id=request_id,
             )
+        response = task_page(response)
         self._debug_log(
             "offline_list_tasks_advanced.success",
             request_id=request_id,
@@ -1389,6 +1403,7 @@ class P115Service:
     def server_info(self) -> dict[str, Any]:
         return {
             "name": "115-MCP-Server",
+            "version": __version__,
             "description": "FastMCP server for 115 cloud storage using p115client.",
             "auth": self.auth_status(validate_remote=False),
             "targeting_rules": {
@@ -1491,9 +1506,11 @@ class P115Service:
             if normalized not in self._client_cache:
                 self._client_cache[normalized] = P115Client(
                     resolved_source,
-                    check_for_relogin=self.settings.p115_check_for_relogin,
-                    app=normalized,
-                    console_qrcode=self.settings.p115_console_qrcode,
+                    **client_kwargs(
+                        P115Client, app=normalized,
+                        console_qrcode=self.settings.p115_console_qrcode,
+                        check_for_relogin=self.settings.p115_check_for_relogin,
+                    ),
                 )
             return self._client_cache[normalized]
 
@@ -1545,7 +1562,16 @@ class P115Service:
             except Exception as exc:  # noqa: BLE001
                 formatted = self._format_backend_error(exc)
                 errors.append(f"{platform or 'default'}: {formatted}")
-                retryable = self._should_retry_platform(exc)
+                retryable = operation not in OFFLINE_MUTATIONS and self._should_retry_platform(exc)
+                if operation in OFFLINE_MUTATIONS:
+                    # The backend may have accepted a request before the error.
+                    # Never re-submit a write via a second API or platform.
+                    self._invalidate_offline_task_snapshots(reason="uncertain_mutation")
+                    raise ToolError(
+                        f"{operation} failed; its remote outcome may be unknown. "
+                        "No automatic retry was made. Query task/directory state before retrying. "
+                        f"Backend error: {formatted}"
+                    ) from exc
                 self._debug_log(
                     "client_fallback.attempt.failure",
                     request_id=request_id,
@@ -1576,7 +1602,21 @@ class P115Service:
                 method_name=method_name,
                 check=check,
             )
-            response = self._call_backend(getattr(client, method_name), *args, **kwargs)
+            method = offline_method(client, method_name) if method_name in OFFLINE_METHODS else getattr(client, method_name)
+            call_args = args
+            if method_name == "offline_add_torrent_open" and has_modern_offline(client, method_name):
+                payload = dict(args[0])
+                if not payload.get("info_hash"):
+                    info = self._call_backend(
+                        check_response,
+                        self._call_backend(offline_method(client, "offline_torrent_info_open"), payload),
+                    )
+                    data = info.get("data", info)
+                    payload["info_hash"] = data.get("info_hash") if isinstance(data, Mapping) else None
+                    if not payload["info_hash"]:
+                        raise ToolError("Torrent metadata contains no info_hash; no download task was submitted.")
+                call_args = (payload, *args[1:])
+            response = self._call_backend(method, *call_args, **kwargs)
             checked = self._call_backend(check_response, response) if check else response
             self._debug_log(
                 "client_call.success",
@@ -1618,134 +1658,52 @@ class P115Service:
         raise ToolError("A target id or path is required.")
 
     def _offline_add_urls_with_platform(self, client: P115Client, platform: str | None, *, request_id: str | None = None, open_payload: dict[str, Any], legacy_payload: dict[str, Any]):
-        def attempt_submit(label: str, func, *args, **kwargs):
-            submit_start = time.perf_counter()
-            self._debug_log(
-                "offline_add_urls.submit.start",
-                request_id=request_id,
-                platform=platform,
-                effective_platform=self._effective_platform(client, platform),
-                method=label,
-                legacy_url_count=sum(1 for key in legacy_payload if key.startswith("url[")),
-                open_url_count=len([line for line in str(open_payload.get("urls", "")).splitlines() if line]),
-                has_remote_dir=("wp_path_id" in open_payload) or ("wp_path_id" in legacy_payload),
+        web = self._is_web_like_platform(platform, client)
+        # Resolve a supported API before dispatch. A failed write is never sent
+        # again through another route: timeouts can follow a successful submit.
+        if has_modern_offline(client, "offline_add_urls") or web or not callable(getattr(client, "offline_add_urls_open", None)):
+            response = self._call_backend(
+                offline_method(client, "offline_add_urls"), dict(legacy_payload),
+                type="web" if web else "ssp",
             )
-            try:
-                result = self._call_backend(func, *args, **kwargs)
-                self._debug_log(
-                    "offline_add_urls.submit.success",
-                    request_id=request_id,
-                    platform=platform,
-                    effective_platform=self._effective_platform(client, platform),
-                    method=label,
-                    elapsed_ms=self._elapsed_ms(submit_start),
-                )
-                return result
-            except Exception as exc:  # noqa: BLE001
-                self._debug_log(
-                    "offline_add_urls.submit.failure",
-                    request_id=request_id,
-                    platform=platform,
-                    effective_platform=self._effective_platform(client, platform),
-                    method=label,
-                    elapsed_ms=self._elapsed_ms(submit_start),
-                    error=self._format_backend_error(exc),
-                )
-                raise
-
-        if self._is_web_like_platform(platform, client):
-            try:
-                response = attempt_submit("legacy:web", client.offline_add_urls, legacy_payload, type="web")
-                return self._call_backend(check_response, response)
-            except Exception as exc:
-                if _is_programming_error(exc):
-                    raise
-                response = attempt_submit("legacy:ssp", client.offline_add_urls, legacy_payload, type="ssp")
-                return self._call_backend(check_response, response)
-        try:
-            response = attempt_submit("open", client.offline_add_urls_open, open_payload)
-            return self._call_backend(check_response, response)
-        except Exception as exc:
-            if _is_programming_error(exc):
-                raise
-            try:
-                response = attempt_submit("legacy:ssp", client.offline_add_urls, legacy_payload, type="ssp")
-                return self._call_backend(check_response, response)
-            except Exception as exc:
-                if _is_programming_error(exc):
-                    raise
-                response = attempt_submit("legacy:web", client.offline_add_urls, legacy_payload, type="web")
-                return self._call_backend(check_response, response)
+        else:
+            response = self._call_backend(offline_method(client, "offline_add_urls_open"), dict(open_payload))
+        return self._call_backend(check_response, response)
 
     def _offline_list_tasks_with_platform(self, client: P115Client, platform: str | None, page: int, *, request_id: str | None = None):
-        def attempt_fetch(label: str, func, *args, **kwargs):
-            fetch_start = time.perf_counter()
-            self._debug_log(
-                "offline_list_tasks.fetch.start",
-                request_id=request_id,
-                platform=platform,
-                effective_platform=self._effective_platform(client, platform),
-                method=label,
-                page=page,
+        web = self._is_web_like_platform(platform, client)
+        if has_modern_offline(client, "offline_list") or web or not callable(getattr(client, "offline_list_open", None)):
+            return self._call_backend(
+                check_response,
+                self._call_backend(offline_method(client, "offline_list"),
+                                   {"page": page, "page_size": 1150}, type="web" if web else "ssp"),
             )
-            try:
-                response = self._call_backend(check_response, self._call_backend(func, *args, **kwargs))
-                data = response.get("data", response)
-                self._debug_log(
-                    "offline_list_tasks.fetch.success",
-                    request_id=request_id,
-                    platform=platform,
-                    effective_platform=self._effective_platform(client, platform),
-                    method=label,
-                    page=page,
-                    elapsed_ms=self._elapsed_ms(fetch_start),
-                    count=data.get("count"),
-                    page_count=data.get("page_count"),
-                )
-                return response
-            except Exception as exc:
-                self._debug_log(
-                    "offline_list_tasks.fetch.failure",
-                    request_id=request_id,
-                    platform=platform,
-                    effective_platform=self._effective_platform(client, platform),
-                    method=label,
-                    page=page,
-                    elapsed_ms=self._elapsed_ms(fetch_start),
-                    error=self._format_backend_error(exc),
-                )
-                raise
-
-        if self._is_web_like_platform(platform, client):
-            return attempt_fetch("legacy:web", client.offline_list, {"page": page, "page_size": 1150}, type="web")
         try:
-            return attempt_fetch("open", client.offline_list_open, page)
+            return self._call_backend(check_response, self._call_backend(offline_method(client, "offline_list_open"), page))
         except Exception as exc:
             if _is_programming_error(exc):
                 raise
-            return attempt_fetch("legacy:ssp", client.offline_list, {"page": page, "page_size": 1150}, type="ssp")
+            # Reads may safely use another available endpoint.
+            return self._call_backend(
+                check_response,
+                self._call_backend(offline_method(client, "offline_list"),
+                                   {"page": page, "page_size": 1150}, type="ssp"),
+            )
 
     def _offline_remove_task_with_platform(self, client: P115Client, platform: str | None, info_hash: str, delete_source_file: bool):
-        payload_open = {"info_hash": info_hash, "del_source_file": int(delete_source_file)}
-        payload_legacy = {"hash[0]": info_hash, "flag": int(delete_source_file)}
-        if self._is_web_like_platform(platform, client):
-            try:
-                return self._call_backend(check_response, self._call_backend(client.offline_remove, payload_legacy, type="web"))
-            except Exception as exc:
-                if _is_programming_error(exc):
-                    raise
-                return self._call_backend(check_response, self._call_backend(client.offline_remove, payload_legacy, type="ssp"))
-        try:
-            return self._call_backend(check_response, self._call_backend(client.offline_remove_open, payload_open))
-        except Exception as exc:
-            if _is_programming_error(exc):
-                raise
-            try:
-                return self._call_backend(check_response, self._call_backend(client.offline_remove, payload_legacy, type="ssp"))
-            except Exception as exc:
-                if _is_programming_error(exc):
-                    raise
-                return self._call_backend(check_response, self._call_backend(client.offline_remove, payload_legacy, type="web"))
+        web = self._is_web_like_platform(platform, client)
+        if has_modern_offline(client, "offline_remove") or web or not callable(getattr(client, "offline_remove_open", None)):
+            response = self._call_backend(
+                offline_method(client, "offline_remove"),
+                {"hash[0]": info_hash, "flag": int(delete_source_file)},
+                type="web" if web else "ssp",
+            )
+        else:
+            response = self._call_backend(
+                offline_method(client, "offline_remove_open"),
+                {"info_hash": info_hash, "del_source_file": int(delete_source_file)},
+            )
+        return self._call_backend(check_response, response)
 
     def _list_all_offline_tasks(self, status: str = "") -> list[dict[str, Any]]:
         snapshot = self._list_all_offline_tasks_cached(status=status)

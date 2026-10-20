@@ -7,8 +7,10 @@ import logging
 from fastmcp import FastMCP
 from fastmcp.resources import ResourceContent, ResourceResult
 
+from .annotations import tool_annotations
 from .config import Settings
 from .service import P115Service
+from .version import __version__
 
 
 SERVER_INSTRUCTIONS = """
@@ -44,36 +46,39 @@ def create_server(service: P115Service | None = None) -> FastMCP:
     mcp = FastMCP(
         name="115-MCP-Server",
         instructions=SERVER_INSTRUCTIONS,
-        version="0.1.0",
+        version=__version__,
         website_url="https://p115client.readthedocs.io/en/latest/",
     )
+
+    def tool(fn):
+        return mcp.tool(fn, annotations=tool_annotations(fn.__name__))
 
     @mcp.resource("info://server")
     def server_info_resource() -> ResourceResult:
         payload = json.dumps(bound_service.server_info(), ensure_ascii=False, indent=2)
         return ResourceResult([ResourceContent(payload, mime_type="application/json")])
 
-    @mcp.tool
+    @tool
     def auth_status(validate_remote: bool = False) -> dict:
         """Return local configuration status and optionally verify remote login state."""
         return bound_service.auth_status(validate_remote=validate_remote)
 
-    @mcp.tool
+    @tool
     def start_qrcode_login(app: str = "alipaymini") -> dict:
         """Start a 115 QR-code login session and return a URL for scanning."""
         return bound_service.start_qrcode_login(app=app)
 
-    @mcp.tool
+    @tool
     def get_qrcode_login_status(session_id: str) -> dict:
         """Check the current status of a previously started QR-code login session."""
         return bound_service.get_qrcode_login_status(session_id=session_id)
 
-    @mcp.tool
+    @tool
     def finish_qrcode_login(session_id: str, output_path: str = "") -> dict:
         """Finish a signed QR-code login session and optionally save cookies to a file."""
         return bound_service.finish_qrcode_login(session_id=session_id, output_path=output_path)
 
-    @mcp.tool
+    @tool
     def list_directory(
         remote_id: str | None = None,
         remote_path: str | None = None,
@@ -82,7 +87,7 @@ def create_server(service: P115Service | None = None) -> FastMCP:
         """List entries under a 115 directory. Defaults to the root directory when no target is provided."""
         return bound_service.list_directory(remote_id=remote_id, remote_path=remote_path, refresh=refresh)
 
-    @mcp.tool
+    @tool
     def get_metadata(
         remote_id: str | None = None,
         remote_path: str | None = None,
@@ -91,7 +96,7 @@ def create_server(service: P115Service | None = None) -> FastMCP:
         """Get metadata for a single 115 file or directory."""
         return bound_service.get_metadata(remote_id=remote_id, remote_path=remote_path, refresh=refresh)
 
-    @mcp.tool
+    @tool
     def search_entries(
         query: str,
         directory_id: str | None = None,
@@ -108,7 +113,7 @@ def create_server(service: P115Service | None = None) -> FastMCP:
             offset=offset,
         )
 
-    @mcp.tool
+    @tool
     def create_directory(
         name: str,
         parent_id: str | None = None,
@@ -123,27 +128,27 @@ def create_server(service: P115Service | None = None) -> FastMCP:
             refresh=refresh,
         )
 
-    @mcp.tool
+    @tool
     def resolve_directory(remote_path: str) -> dict:
         """Resolve a 115 directory path to backend lookup information such as directory id."""
         return bound_service.resolve_directory(remote_path=remote_path)
 
-    @mcp.tool
+    @tool
     def get_storage_info() -> dict:
         """Return 115 storage/quota information for the current account."""
         return bound_service.get_storage_info()
 
-    @mcp.tool
+    @tool
     def get_account_info() -> dict:
         """Return account information for the current 115 user."""
         return bound_service.get_account_info()
 
-    @mcp.tool
+    @tool
     def get_index_info(include_space_numbers: bool = False) -> dict:
         """Return dashboard/index information for the current account."""
         return bound_service.get_index_info(include_space_numbers=include_space_numbers)
 
-    @mcp.tool
+    @tool
     def path_exists(
         remote_id: str | None = None,
         remote_path: str | None = None,
@@ -152,7 +157,7 @@ def create_server(service: P115Service | None = None) -> FastMCP:
         """Check whether a file or directory exists."""
         return bound_service.path_exists(remote_id=remote_id, remote_path=remote_path, refresh=refresh)
 
-    @mcp.tool
+    @tool
     def count_directory(
         remote_id: str | None = None,
         remote_path: str | None = None,
@@ -161,7 +166,7 @@ def create_server(service: P115Service | None = None) -> FastMCP:
         """Count entries in a directory without returning a full listing."""
         return bound_service.count_directory(remote_id=remote_id, remote_path=remote_path, refresh=refresh)
 
-    @mcp.tool
+    @tool
     def get_ancestors(
         remote_id: str | None = None,
         remote_path: str | None = None,
@@ -170,7 +175,7 @@ def create_server(service: P115Service | None = None) -> FastMCP:
         """Return the ancestor chain for a file or directory."""
         return bound_service.get_ancestors(remote_id=remote_id, remote_path=remote_path, refresh=refresh)
 
-    @mcp.tool
+    @tool
     def glob_entries(
         pattern: str,
         directory_id: str | None = None,
@@ -189,7 +194,7 @@ def create_server(service: P115Service | None = None) -> FastMCP:
             refresh=refresh,
         )
 
-    @mcp.tool
+    @tool
     def walk_directory(
         remote_id: str | None = None,
         remote_path: str | None = None,
@@ -208,7 +213,7 @@ def create_server(service: P115Service | None = None) -> FastMCP:
             refresh=refresh,
         )
 
-    @mcp.tool
+    @tool
     def get_stat(
         remote_id: str | None = None,
         remote_path: str | None = None,
@@ -217,7 +222,7 @@ def create_server(service: P115Service | None = None) -> FastMCP:
         """Return a stat-like view for a file or directory."""
         return bound_service.get_stat(remote_id=remote_id, remote_path=remote_path, refresh=refresh)
 
-    @mcp.tool
+    @tool
     def offline_add_urls(
         urls: list[str],
         remote_dir_id: str | None = None,
@@ -225,12 +230,12 @@ def create_server(service: P115Service | None = None) -> FastMCP:
         """Create one or more offline download tasks from URLs, magnets, FTP, or ed2k links."""
         return bound_service.offline_add_urls(urls, remote_dir_id=remote_dir_id)
 
-    @mcp.tool
+    @tool
     def offline_get_torrent_info(torrent_sha1: str, pick_code: str) -> dict:
         """Inspect torrent metadata before creating an offline BT task."""
         return bound_service.offline_get_torrent_info(torrent_sha1=torrent_sha1, pick_code=pick_code)
 
-    @mcp.tool
+    @tool
     def offline_add_torrent(
         torrent_sha1: str,
         pick_code: str,
@@ -249,62 +254,62 @@ def create_server(service: P115Service | None = None) -> FastMCP:
             save_path=save_path,
         )
 
-    @mcp.tool
+    @tool
     def offline_list_tasks(page: int = 1) -> dict:
         """List current offline download tasks."""
         return bound_service.offline_list_tasks(page=page)
 
-    @mcp.tool
+    @tool
     def offline_list_tasks_advanced(page: int = 1, page_size: int = 30, status: str = "") -> dict:
         """List offline tasks with page size and optional status filtering."""
         return bound_service.offline_list_tasks_advanced(page=page, page_size=page_size, status=status)
 
-    @mcp.tool
+    @tool
     def offline_find_tasks(query: str = "", info_hash: str = "", status: str = "", limit: int = 50, offset: int = 0, refresh: bool = False) -> dict:
         """Search/filter offline tasks client-side by query, info hash, and optional status. Reuses a short-lived shared snapshot by default."""
         return bound_service.offline_find_tasks(query=query, info_hash=info_hash, status=status, limit=limit, offset=offset, refresh=refresh)
 
-    @mcp.tool
+    @tool
     def offline_remove_task(info_hash: str, delete_source_file: bool = False) -> dict:
         """Remove an offline task by info hash."""
         return bound_service.offline_remove_task(info_hash=info_hash, delete_source_file=delete_source_file)
 
-    @mcp.tool
+    @tool
     def offline_remove_tasks(info_hashes: list[str], delete_source_file: bool = False) -> dict:
         """Remove multiple offline tasks by info hash."""
         return bound_service.offline_remove_tasks(info_hashes=info_hashes, delete_source_file=delete_source_file)
 
-    @mcp.tool
+    @tool
     def offline_clear_tasks(scope: str = "completed") -> dict:
         """Bulk-clear offline tasks by named scope."""
         return bound_service.offline_clear_tasks(scope=scope)
 
-    @mcp.tool
+    @tool
     def offline_get_quota_info() -> dict:
         """Return offline download quota/capacity information."""
         return bound_service.offline_get_quota_info()
 
-    @mcp.tool
+    @tool
     def offline_get_sign_info() -> dict:
         """Return sign/time information required by low-level offline APIs."""
         return bound_service.offline_get_sign_info()
 
-    @mcp.tool
+    @tool
     def offline_get_quota_package_array() -> dict:
         """Return detailed offline quota package array information."""
         return bound_service.offline_get_quota_package_array()
 
-    @mcp.tool
+    @tool
     def offline_get_quota_package_info() -> dict:
         """Return detailed offline quota package information."""
         return bound_service.offline_get_quota_package_info()
 
-    @mcp.tool
+    @tool
     def offline_get_download_paths() -> dict:
         """Return current default offline download directory choices."""
         return bound_service.offline_get_download_paths()
 
-    @mcp.tool
+    @tool
     def offline_set_download_path(
         remote_dir_id: str | None = None,
         remote_dir_path: str | None = None,
@@ -312,37 +317,37 @@ def create_server(service: P115Service | None = None) -> FastMCP:
         """Set the default directory used by offline downloads."""
         return bound_service.offline_set_download_path(remote_dir_id=remote_dir_id, remote_dir_path=remote_dir_path)
 
-    @mcp.tool
+    @tool
     def offline_restart_task(info_hash: str) -> dict:
         """Restart a failed or paused offline task by info hash."""
         return bound_service.offline_restart_task(info_hash=info_hash)
 
-    @mcp.tool
+    @tool
     def offline_get_task_count(flag: int = 0) -> dict:
         """Return the current offline task count for a given backend flag."""
         return bound_service.offline_get_task_count(flag=flag)
 
-    @mcp.tool
+    @tool
     def list_recycle_bin(limit: int = 32, offset: int = 0) -> dict:
         """List recycle-bin entries."""
         return bound_service.list_recycle_bin(limit=limit, offset=offset)
 
-    @mcp.tool
+    @tool
     def get_recycle_bin_entry(rid: str) -> dict:
         """Get a single recycle-bin entry by recycle id."""
         return bound_service.get_recycle_bin_entry(rid=rid)
 
-    @mcp.tool
+    @tool
     def restore_recycle_bin_entries(entry_ids: list[str]) -> dict:
         """Restore entries from the recycle bin."""
         return bound_service.restore_recycle_bin_entries(entry_ids=entry_ids)
 
-    @mcp.tool
+    @tool
     def clear_recycle_bin(entry_ids: list[str] | None = None, password: str = "") -> dict:
         """Clear the recycle bin or permanently delete specific recycle-bin entries."""
         return bound_service.clear_recycle_bin(entry_ids=entry_ids, password=password)
 
-    @mcp.tool
+    @tool
     def list_labels(
         keyword: str = "",
         limit: int = 100,
@@ -353,27 +358,27 @@ def create_server(service: P115Service | None = None) -> FastMCP:
         """List available labels/tags."""
         return bound_service.list_labels(keyword=keyword, limit=limit, offset=offset, sort=sort, order=order)
 
-    @mcp.tool
+    @tool
     def set_entry_labels(remote_id: str, label_ids: list[str]) -> dict:
         """Replace the labels assigned to an entry."""
         return bound_service.set_entry_labels(remote_id=remote_id, label_ids=label_ids)
 
-    @mcp.tool
+    @tool
     def list_shares(limit: int = 32, offset: int = 0, include_cancelled: bool = False) -> dict:
         """List the current user's shares."""
         return bound_service.list_shares(limit=limit, offset=offset, include_cancelled=include_cancelled)
 
-    @mcp.tool
+    @tool
     def get_share_info(share_code: str) -> dict:
         """Get information about a share by share code."""
         return bound_service.get_share_info(share_code=share_code)
 
-    @mcp.tool
+    @tool
     def get_share_receive_code(share_code: str) -> dict:
         """Get the receive code for a share."""
         return bound_service.get_share_receive_code(share_code=share_code)
 
-    @mcp.tool
+    @tool
     def receive_share_entries(
         share_code: str,
         receive_code: str,
@@ -392,7 +397,7 @@ def create_server(service: P115Service | None = None) -> FastMCP:
             is_check=is_check,
         )
 
-    @mcp.tool
+    @tool
     def get_share_download_url(
         file_id: str,
         share_code: str = "",
@@ -411,17 +416,17 @@ def create_server(service: P115Service | None = None) -> FastMCP:
             app=app,
         )
 
-    @mcp.tool
+    @tool
     def list_share_access_users(share_code: str) -> dict:
         """List access users for a share."""
         return bound_service.list_share_access_users(share_code=share_code)
 
-    @mcp.tool
+    @tool
     def get_share_download_quota() -> dict:
         """Return public-share download quota information."""
         return bound_service.get_share_download_quota()
 
-    @mcp.tool
+    @tool
     def upload_local_file(
         local_path: str,
         remote_dir_id: str | None = None,
@@ -438,7 +443,7 @@ def create_server(service: P115Service | None = None) -> FastMCP:
             refresh=refresh,
         )
 
-    @mcp.tool
+    @tool
     def download_file(
         local_path: str,
         remote_id: str | None = None,
@@ -455,7 +460,7 @@ def create_server(service: P115Service | None = None) -> FastMCP:
             refresh=refresh,
         )
 
-    @mcp.tool
+    @tool
     def move_entry(
         source_id: str | None = None,
         source_path: str | None = None,
@@ -472,7 +477,7 @@ def create_server(service: P115Service | None = None) -> FastMCP:
             refresh=refresh,
         )
 
-    @mcp.tool
+    @tool
     def batch_move_entries(
         source_ids: list[str] | None = None,
         source_paths: list[str] | None = None,
@@ -487,7 +492,7 @@ def create_server(service: P115Service | None = None) -> FastMCP:
             destination_dir_path=destination_dir_path,
         )
 
-    @mcp.tool
+    @tool
     def copy_entry(
         source_id: str | None = None,
         source_path: str | None = None,
@@ -504,7 +509,7 @@ def create_server(service: P115Service | None = None) -> FastMCP:
             refresh=refresh,
         )
 
-    @mcp.tool
+    @tool
     def batch_copy_entries(
         source_ids: list[str] | None = None,
         source_paths: list[str] | None = None,
@@ -519,7 +524,7 @@ def create_server(service: P115Service | None = None) -> FastMCP:
             destination_dir_path=destination_dir_path,
         )
 
-    @mcp.tool
+    @tool
     def rename_entry(
         new_name: str,
         remote_id: str | None = None,
@@ -534,7 +539,7 @@ def create_server(service: P115Service | None = None) -> FastMCP:
             refresh=refresh,
         )
 
-    @mcp.tool
+    @tool
     def remove_entry(
         remote_id: str | None = None,
         remote_path: str | None = None,
@@ -543,7 +548,7 @@ def create_server(service: P115Service | None = None) -> FastMCP:
         """Remove a file or directory from 115."""
         return bound_service.remove_entry(remote_id=remote_id, remote_path=remote_path, refresh=refresh)
 
-    @mcp.tool
+    @tool
     def batch_remove_entries(
         source_ids: list[str] | None = None,
         source_paths: list[str] | None = None,
@@ -551,7 +556,7 @@ def create_server(service: P115Service | None = None) -> FastMCP:
         """Remove multiple files or directories in one operation."""
         return bound_service.batch_remove_entries(source_ids=source_ids, source_paths=source_paths)
 
-    @mcp.tool
+    @tool
     def get_download_url(
         remote_id: str | None = None,
         remote_path: str | None = None,
@@ -565,11 +570,10 @@ def create_server(service: P115Service | None = None) -> FastMCP:
 
 def main() -> None:
     settings = Settings()
-    configure_app_logging(settings)
     parser = argparse.ArgumentParser(description="Run the 115 FastMCP server.")
     parser.add_argument(
         "--transport",
-        choices=["stdio", "http", "streamable-http", "sse"],
+        choices=["stdio", "http", "streamable-http", "streamable_http", "sse"],
         default=settings.fastmcp_transport,
     )
     parser.add_argument("--host", default=settings.fastmcp_host)
@@ -578,13 +582,15 @@ def main() -> None:
     parser.add_argument("--log-level", default=settings.fastmcp_log_level)
     args = parser.parse_args()
 
+    configure_app_logging(settings)
+    transport = "http" if args.transport == "streamable_http" else args.transport
     server = create_server(P115Service(settings=settings))
-    if args.transport == "stdio":
+    if transport == "stdio":
         server.run(transport="stdio", show_banner=False, log_level=args.log_level)
         return
 
     server.run(
-        transport=args.transport,
+        transport=transport,
         show_banner=False,
         host=args.host,
         port=args.port,

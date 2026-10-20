@@ -830,12 +830,17 @@ class P115ServiceTests(unittest.TestCase):
         self.assertEqual(result["remaining"], [])
         self.assertEqual(result["info_hashes"], ["abc", "def"])
 
-    def test_offline_remove_task_falls_back_when_open_delete_fails(self) -> None:
+    def test_offline_remove_task_does_not_retry_failed_open_delete(self) -> None:
         service = self.make_service()
-        service._active_platform = "android"
-        service.client().fail_offline_remove_open = True
-        result = service.offline_remove_task("abc")
-        self.assertTrue(result["removed"])
+        fake_client = service.client()
+        fake_client.fail_offline_remove_open = True
+        service._platform_candidates = lambda preferred=None: ["android", None]
+        # A timeout/authentication error may arrive after deletion was accepted.
+        # Endpoint fallback on writes would make that operation non-idempotent.
+        with self.assertRaisesRegex(ToolError, "No automatic retry"):
+            service.offline_remove_task("abc")
+        self.assertIsNone(fake_client.offline_remove_legacy_payload)
+        self.assertEqual(len(fake_client.offline_tasks), 2)
 
     def test_offline_clear_tasks_maps_scope(self) -> None:
         service = self.make_service()
