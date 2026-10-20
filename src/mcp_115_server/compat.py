@@ -7,11 +7,44 @@ never retries a dispatched mutation on a second endpoint.
 from __future__ import annotations
 
 import inspect
+from collections import UserDict
 from collections.abc import Mapping
 from functools import wraps
 from typing import Any, Callable
+from weakref import WeakValueDictionary
 
 from fastmcp.exceptions import ToolError
+
+
+class _AttributeCache(UserDict):
+    """Bounded strong index preserving the backend's mutable dict identity."""
+
+    def __init__(self, values=(), *, maxsize: int = 4096):
+        if maxsize < 1:
+            raise ValueError("maxsize must be positive")
+        self.maxsize = maxsize
+        super().__init__(values)
+
+    def __setitem__(self, key, value):
+        self.data.pop(key, None)
+        self.data[key] = value
+        while len(self.data) > self.maxsize:
+            del self.data[next(iter(self.data))]
+
+
+def prepare_filesystem(fs):
+    """Fix the plain-dict/weak-cache mismatch on this filesystem instance only.
+
+    p115client 0.0.9.7.2 inserts ordinary dicts in get_attr/mkdir/rename, but
+    its two attribute indexes are weak-valued. Bounded strong indexes accept
+    those dicts without copying, retaining shared mutable attribute identity.
+    Cookie changes discard the entire filesystem and these indexes.
+    """
+    for name in ("id_to_attr", "_pid_name_to_attr"):
+        cache = getattr(fs, name, None)
+        if isinstance(cache, WeakValueDictionary):
+            setattr(fs, name, _AttributeCache(cache))
+    return fs
 
 
 OFFLINE_METHODS = {

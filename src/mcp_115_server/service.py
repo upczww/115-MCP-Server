@@ -21,7 +21,7 @@ from .config import Settings
 from .version import __version__
 from .compat import (
     OFFLINE_METHODS, OFFLINE_MUTATIONS, client_kwargs,
-    has_modern_offline, offline_method, task_page,
+    has_modern_offline, offline_method, prepare_filesystem, task_page,
 )
 
 
@@ -1518,7 +1518,9 @@ class P115Service:
         with self._state_lock:
             normalized = self._normalize_platform(platform)
             if normalized not in self._fs_cache:
-                self._fs_cache[normalized] = P115FileSystem(self._get_client_for_platform(normalized, cookies_source=cookies_source))
+                self._fs_cache[normalized] = prepare_filesystem(
+                    P115FileSystem(self._get_client_for_platform(normalized, cookies_source=cookies_source))
+                )
             return self._fs_cache[normalized]
 
     def _remember_active_platform(self, platform: str | None, client: P115Client | None = None) -> None:
@@ -1530,7 +1532,7 @@ class P115Service:
             self._client_instance = active_client
             active_fs = self._fs_cache.get(normalized)
             if active_fs is None:
-                active_fs = P115FileSystem(active_client)
+                active_fs = prepare_filesystem(P115FileSystem(active_client))
                 self._fs_cache[normalized] = active_fs
             self._fs_instance = active_fs
 
